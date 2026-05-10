@@ -42,9 +42,12 @@ def test_run_evaluation_writes_expected_artifacts(tmp_path: Path, monkeypatch) -
         conditions=["standard", "cot"],
         reasoning_effort="medium",
         max_tokens=128,
+        system_prompt="Always end with Final answer: <answer>.",
         api_key="EMPTY",
         timeout=1,
+        preflight_timeout=1,
         write_incremental=False,
+        skip_preflight=False,
     )
 
     output_dir = run_evaluation(args, client=FakeClient())

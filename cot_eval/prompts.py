@@ -1,8 +1,18 @@
 from __future__ import annotations
 
 import hashlib
+import re
 
 from cot_eval.types import Condition, TaskName
+
+DEFAULT_SYSTEM_PROMPT = (
+    "You are answering benchmark evaluation questions. Follow the format shown in the user's examples. "
+    "If the examples include reasoning, you may show concise reasoning before the answer; otherwise answer directly. "
+    "Always end with exactly one final line formatted as `Final answer: <answer>`, with no text after it. "
+    "For numeric questions, `<answer>` must be only the final number without units. "
+    "For yes/no questions, `<answer>` must be exactly `yes` or `no`. "
+    "For last-letter questions, `<answer>` must be only the concatenated letters."
+)
 
 MATH_COT_EXEMPLARS = [
     (
@@ -132,17 +142,35 @@ EXEMPLARS: dict[TaskName, list[tuple[str, str]]] = {
 
 
 def direct_answer_from_cot(answer: str) -> str:
-    marker = "The answer is "
-    index = answer.rfind(marker)
-    if index == -1:
+    matches = list(re.finditer(r"(?:so\s+)?the\s+answer\s+is\s+(.+?)\s*$", answer, flags=re.IGNORECASE | re.DOTALL))
+    if not matches:
         return answer
-    return marker + answer[index + len(marker) :]
+    final_answer = clean_final_answer(matches[-1].group(1))
+    return f"Final answer: {final_answer}"
+
+
+def clean_final_answer(answer: str) -> str:
+    cleaned = " ".join(answer.strip().split())
+    if cleaned.endswith("."):
+        cleaned = cleaned[:-1].strip()
+    return cleaned
+
+
+def ensure_final_answer_line(answer: str) -> str:
+    if re.search(r"\bfinal\s+answer\s*[:=]", answer, flags=re.IGNORECASE):
+        return answer
+    matches = list(re.finditer(r"(?:so\s+)?the\s+answer\s+is\s+(.+?)\s*$", answer, flags=re.IGNORECASE | re.DOTALL))
+    if not matches:
+        return answer
+    final_answer = clean_final_answer(matches[-1].group(1))
+    reasoning = answer[: matches[-1].start()].rstrip()
+    return f"{reasoning}\nFinal answer: {final_answer}" if reasoning else f"Final answer: {final_answer}"
 
 
 def build_prompt(task: TaskName, condition: Condition, question: str) -> str:
     lines: list[str] = []
     for exemplar_question, exemplar_answer in EXEMPLARS[task]:
-        answer = exemplar_answer if condition == "cot" else direct_answer_from_cot(exemplar_answer)
+        answer = ensure_final_answer_line(exemplar_answer) if condition == "cot" else direct_answer_from_cot(exemplar_answer)
         lines.append(f"Q: {exemplar_question}\nA: {answer}")
     lines.append(f"Q: {question}\nA:")
     return "\n\n".join(lines)

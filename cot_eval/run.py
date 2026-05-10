@@ -11,9 +11,9 @@ from typing import Protocol
 
 from tqdm import tqdm
 
-from cot_eval.client import OpenAIChatClient
+from cot_eval.client import EndpointUnavailableError, OpenAIChatClient
 from cot_eval.metrics import aggregate_metrics, write_metrics_csv
-from cot_eval.prompts import build_prompt, prompt_hash
+from cot_eval.prompts import DEFAULT_SYSTEM_PROMPT, build_prompt, prompt_hash
 from cot_eval.reporting import write_latex_section, write_markdown_analysis
 from cot_eval.scoring import answers_equal, parse_answer
 from cot_eval.tasks import load_items
@@ -41,7 +41,7 @@ def make_output_dir(base_dir: Path) -> Path:
     return output_dir
 
 
-def evaluate_item(client: CompletionClient, item: EvalItem, condition: Condition) -> Prediction:
+def evaluate_item(client: CompletionClient, item: EvalItem, condition: Condition, system_prompt: str) -> Prediction:
     prompt = build_prompt(item.task, condition, item.question)
     result = client.complete(prompt)
     parsed = parse_answer(item.task, result.content)
@@ -56,7 +56,7 @@ def evaluate_item(client: CompletionClient, item: EvalItem, condition: Condition
         correct=correct,
         parse_failed=parsed is None,
         response=result.content,
-        prompt_hash=prompt_hash(prompt),
+        prompt_hash=prompt_hash(f"SYSTEM:\n{system_prompt}\n\nUSER:\n{prompt}"),
         latency_s=result.latency_s,
         prompt_tokens=result.prompt_tokens,
         completion_tokens=result.completion_tokens,
@@ -75,6 +75,19 @@ def write_predictions(path: Path, predictions: list[Prediction]) -> None:
 
 
 def run_evaluation(args: argparse.Namespace, client: CompletionClient | None = None) -> Path:
+    if client is None:
+        client = OpenAIChatClient(
+            base_url=args.base_url,
+            api_key=args.api_key,
+            model=args.model,
+            reasoning_effort=args.reasoning_effort,
+            max_tokens=args.max_tokens,
+            timeout=args.timeout,
+            system_prompt=args.system_prompt,
+        )
+        if not args.skip_preflight:
+            client.check_connection(timeout=args.preflight_timeout)
+
     items = load_items(args.tasks, args.gsm8k_limit, args.symbolic_limit, args.seed)
     output_dir = make_output_dir(args.output_dir)
     config = {
@@ -88,20 +101,13 @@ def run_evaluation(args: argparse.Namespace, client: CompletionClient | None = N
         "temperature": 0,
         "reasoning_effort": args.reasoning_effort,
         "max_tokens": args.max_tokens,
+        "system_prompt": args.system_prompt,
+        "system_prompt_hash": prompt_hash(args.system_prompt),
         "backend": "vllm-openai-compatible",
         "tensor_parallel_size": 4,
+        "skip_preflight": args.skip_preflight,
     }
     (output_dir / "config.json").write_text(json.dumps(config, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-
-    if client is None:
-        client = OpenAIChatClient(
-            base_url=args.base_url,
-            api_key=args.api_key,
-            model=args.model,
-            reasoning_effort=args.reasoning_effort,
-            max_tokens=args.max_tokens,
-            timeout=args.timeout,
-        )
 
     predictions: list[Prediction] = []
     total = len(items) * len(args.conditions)
@@ -109,7 +115,7 @@ def run_evaluation(args: argparse.Namespace, client: CompletionClient | None = N
     try:
         for item in items:
             for condition in args.conditions:
-                predictions.append(evaluate_item(client, item, condition))
+                predictions.append(evaluate_item(client, item, condition, args.system_prompt))
                 progress.update(1)
                 if args.write_incremental:
                     write_predictions(output_dir / "predictions.jsonl", predictions)
@@ -136,9 +142,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--reasoning-effort", default="medium", choices=["low", "medium", "high"])
     parser.add_argument("--max-tokens", type=int, default=1024)
+    parser.add_argument(
+        "--system-prompt",
+        default=DEFAULT_SYSTEM_PROMPT,
+        help="System message used for every request; keep identical across conditions for fair comparisons.",
+    )
     parser.add_argument("--timeout", type=float, default=120.0)
+    parser.add_argument("--preflight-timeout", type=float, default=5.0, help="Seconds to wait for the initial /models check.")
     parser.add_argument("--output-dir", type=Path, default=Path("results"))
     parser.add_argument("--write-incremental", action="store_true", help="Rewrite predictions.jsonl after every prompt.")
+    parser.add_argument("--skip-preflight", action="store_true", help="Skip the initial /models endpoint check.")
     return parser
 
 
@@ -149,7 +162,11 @@ def main(argv: list[str] | None = None) -> int:
     if invalid_conditions:
         parser.error(f"Unknown conditions: {', '.join(invalid_conditions)}")
     args.conditions = [condition for condition in args.conditions]  # argparse stores strings; values validated above.
-    output_dir = run_evaluation(args)
+    try:
+        output_dir = run_evaluation(args)
+    except EndpointUnavailableError as exc:
+        print(f"Endpoint unavailable: {exc}", file=sys.stderr)
+        return 2
     print(f"Wrote evaluation artifacts to {output_dir}")
     return 0
 
