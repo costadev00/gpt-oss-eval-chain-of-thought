@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gpt-oss-eval-chain-of-thought"
+version = "0.1.0"
+description = "Evaluate gpt-oss-20b with and without chain-of-thought prompting."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "datasets>=2.18.0",
+  "openai>=1.40.0",
+  "tqdm>=4.66.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["cot_eval*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
