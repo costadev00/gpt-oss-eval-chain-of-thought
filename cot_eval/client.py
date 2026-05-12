@@ -4,7 +4,7 @@ import time
 import sys
 from typing import Any
 
-from cot_eval.types import CompletionResult
+from cot_eval.types import CompletionResult, TextCompletionLogprobsResult
 
 
 class EndpointUnavailableError(RuntimeError):
@@ -79,6 +79,9 @@ class OpenAIChatClient:
             )
 
     def complete(self, prompt: str) -> CompletionResult:
+        return self.chat_complete(prompt, temperature=0, max_tokens=self._max_tokens)
+
+    def chat_complete(self, prompt: str, temperature: float, max_tokens: int) -> CompletionResult:
         extra_body = {}
         if self._reasoning_effort:
             extra_body["reasoning_effort"] = self._reasoning_effort
@@ -86,14 +89,14 @@ class OpenAIChatClient:
         start = time.perf_counter()
         retried = False
         try:
-            response = self._create(prompt, extra_body=extra_body or None)
+            response = self._create(prompt, temperature=temperature, max_tokens=max_tokens, extra_body=extra_body or None)
         except Exception as exc:
             self._raise_endpoint_error_if_needed(exc)
             if not extra_body or not self._should_retry_without_extra_body(exc):
                 raise
             retried = True
             try:
-                response = self._create(prompt, extra_body=None)
+                response = self._create(prompt, temperature=temperature, max_tokens=max_tokens, extra_body=None)
             except Exception as retry_exc:
                 self._raise_endpoint_error_if_needed(retry_exc)
                 raise
@@ -114,7 +117,47 @@ class OpenAIChatClient:
             discarded_reasoning=discarded_reasoning,
         )
 
-    def _create(self, prompt: str, extra_body: dict[str, Any] | None) -> Any:
+    def completion_with_logprobs(
+        self,
+        prompt: str,
+        max_tokens: int = 1,
+        top_logprobs: int = 20,
+        temperature: float = 0,
+        stop: list[str] | None = None,
+    ) -> TextCompletionLogprobsResult:
+        start = time.perf_counter()
+        try:
+            response = self._client.completions.create(
+                model=self._model,
+                prompt=prompt,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                logprobs=top_logprobs,
+                stop=stop,
+            )
+        except Exception as exc:
+            self._raise_endpoint_error_if_needed(exc)
+            raise
+        latency_s = time.perf_counter() - start
+
+        choice = response.choices[0]
+        logprobs = getattr(choice, "logprobs", None)
+        usage = getattr(response, "usage", None)
+        tokens = list(getattr(logprobs, "tokens", None) or [])
+        token_logprobs = list(getattr(logprobs, "token_logprobs", None) or [])
+        top = list(getattr(logprobs, "top_logprobs", None) or [])
+        return TextCompletionLogprobsResult(
+            content=getattr(choice, "text", "") or "",
+            latency_s=latency_s,
+            tokens=tokens,
+            token_logprobs=token_logprobs,
+            top_logprobs=[dict(item or {}) for item in top],
+            prompt_tokens=getattr(usage, "prompt_tokens", None),
+            completion_tokens=getattr(usage, "completion_tokens", None),
+            total_tokens=getattr(usage, "total_tokens", None),
+        )
+
+    def _create(self, prompt: str, temperature: float, max_tokens: int, extra_body: dict[str, Any] | None) -> Any:
         messages: list[dict[str, str]] = []
         if self._system_prompt:
             messages.append({"role": "system", "content": self._system_prompt})
@@ -122,8 +165,8 @@ class OpenAIChatClient:
         kwargs: dict[str, Any] = {
             "model": self._model,
             "messages": messages,
-            "temperature": 0,
-            "max_tokens": self._max_tokens,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
         }
         if extra_body is not None:
             kwargs["extra_body"] = extra_body

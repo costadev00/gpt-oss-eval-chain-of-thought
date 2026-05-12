@@ -1,0 +1,487 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{hyperref}
+
+\title{Avaliacao do GPT-OSS-20B com Chain-of-Thought e Process Supervision Promptado}
+\author{Evaluation harness local com vLLM}
+\date{Rodadas principais: 20260510-185218 e 20260510-231913}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Este relatorio consolida duas avaliacoes locais do modelo
+\texttt{openai/gpt-oss-20b}. A primeira compara prompting few-shot padrao
+contra few-shot com \emph{chain-of-thought} (CoT), inspirada em
+\emph{Chain-of-Thought Prompting Elicits Reasoning in Large Language Models}.
+A segunda implementa uma aproximacao promptada de \emph{Process Supervision},
+inspirada em \emph{Let's Verify Step by Step}, na qual o mesmo modelo gera
+solucoes para problemas MATH e tambem julga cada passo via logprobs. Todos os
+experimentos foram executados localmente com vLLM em quatro GPUs RTX 4000 Ada.
+Os resultados indicam que CoT melhora GSM8K de 94,5\% para 96,5\%, mas nao
+ajuda em tarefas simbolicas simples. No experimento de Process Supervision, o
+best-of-8 melhora a acuracia de 86,0\% para 96,0\%, mas o PRM promptado empata
+com majority vote e nao supera o baseline simples.
+\end{abstract}
+
+\section{Configuracao experimental}
+
+As avaliacoes usaram o modelo \texttt{openai/gpt-oss-20b} servido localmente
+por vLLM com API OpenAI-compatible. O servidor foi executado em quatro GPUs
+NVIDIA RTX 4000 Ada Generation com tensor parallel igual a 4. O objetivo nao
+foi reproduzir todos os numeros dos papers originais, mas implementar
+experimentos locais controlados que permitissem estudar dois mecanismos:
+prompting com CoT e selecao por supervisao de processo.
+
+\begin{table}[h]
+\centering
+\caption{Configuracao geral dos experimentos.}
+\label{tab:general_setup}
+\begin{tabular}{ll}
+\toprule
+Campo & Valor \\
+\midrule
+Modelo & \texttt{openai/gpt-oss-20b} \\
+Backend & vLLM OpenAI-compatible local \\
+Paralelismo & Tensor parallel em 4 GPUs \\
+GPUs & 4x NVIDIA RTX 4000 Ada Generation \\
+Hardware alvo & Inferencia local distribuida \\
+Raw CoT interno & Nao utilizado no relatorio \\
+Artefatos CoT & \texttt{experiments/01\_chain\_of\_thought/artifacts/20260510-185218/} \\
+Artefatos PRM & \texttt{experiments/02\_process\_supervision/artifacts/20260510-231913/} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Em ambos os estudos, a avaliacao se baseia apenas em respostas visiveis,
+respostas parseadas e metricas agregadas. O relatorio nao usa nem expande raw
+chain-of-thought interno do modelo.
+
+\section{Experimento 1: CoT versus resposta direta}
+
+\subsection{Metodo}
+
+O primeiro experimento compara duas condicoes de prompting. A condicao
+\emph{Sem CoT} usa exemplos few-shot com resposta direta. A condicao
+\emph{CoT} usa exemplos few-shot com raciocinio intermediario antes da resposta
+final. As duas condicoes compartilham o mesmo modelo, backend, temperatura
+zero, \texttt{reasoning\_effort=medium} e o mesmo contrato de saida:
+\texttt{Final answer: <answer>}. Esse contrato reduz a chance de o parser
+extrair numeros intermediarios em vez da resposta final.
+
+Foram avaliadas tres tarefas: GSM8K, Last Letter e Coin Flip. GSM8K representa
+raciocinio aritmetico multi-etapa; Last Letter e uma tarefa simbolica local; e
+Coin Flip avalia rastreamento simples de estado binario.
+
+GSM8K e um benchmark de problemas matematicos em linguagem natural criado pela
+OpenAI para avaliar raciocinio aritmetico multi-etapa em modelos de linguagem.
+O nome vem de ``Grade School Math 8K'', pois o conjunto contem cerca de 8,5 mil
+problemas no estilo matematica de ensino fundamental, normalmente resolviveis
+com operacoes como soma, subtracao, multiplicacao, divisao, proporcoes e
+contagem. Cada exemplo traz um enunciado textual e uma solucao com resposta
+final numerica. Um problema tipico seria: ``Joao tinha 12 macas, comprou mais 8
+e depois dividiu igualmente entre 5 amigos; com quantas macas cada amigo
+ficou?'', exigindo que o modelo decomponha o texto em etapas aritmeticas antes
+de chegar a resposta. No nosso experimento, usamos o dataset publico
+\texttt{openai/gsm8k}, disponivel no Hugging Face, especificamente a
+configuracao \texttt{main} e o split \texttt{test}. Do conjunto completo de
+aproximadamente 8,5 mil problemas, avaliamos uma amostra de 200 problemas do
+split de teste. A resposta correta foi extraida do campo de solucao do dataset,
+onde o valor final aparece apos o marcador \texttt{\#\#\#\#}, e o modelo foi
+considerado correto quando sua linha \texttt{Final answer: <answer>} correspondia
+numericamente a esse valor.
+
+A tarefa Last Letter foi usada como uma avaliacao simbolica simples, inspirada
+nas tarefas sinteticas utilizadas no artigo de Chain-of-Thought. Nessa tarefa,
+o modelo recebe uma sequencia de palavras ou nomes e deve retornar a
+concatenacao da ultima letra de cada termo, preservando a ordem em que os termos
+aparecem. Por exemplo, para a entrada ``Donald Hamilton'', a resposta esperada
+e \texttt{dn}, pois a ultima letra de ``Donald'' e \texttt{d} e a ultima letra
+de ``Hamilton'' e \texttt{n}. Diferentemente do GSM8K, essa tarefa nao vem de
+um dataset externo fixo: ela foi gerada localmente pelo nosso harness, de forma
+deterministica a partir de uma seed, para permitir controle total sobre os
+exemplos e as respostas ouro. No experimento, avaliamos 100 exemplos de Last
+Letter. A resposta do modelo foi extraida da linha \texttt{Final answer:
+<answer>} e comparada exatamente, apos normalizacao textual, com a string ouro
+gerada pela regra da tarefa.
+
+A tarefa Coin Flip tambem foi gerada localmente e segue o estilo de tarefas
+simbolicas de rastreamento de estado usadas para avaliar Chain-of-Thought. Nessa
+tarefa, o enunciado descreve o estado inicial de uma moeda e uma sequencia de
+acoes, como virar ou nao virar a moeda. O modelo deve determinar se, ao final da
+sequencia, a moeda esta com a face inicial para cima, respondendo em formato
+\texttt{yes} ou \texttt{no}. Um exemplo simplificado seria: ``A coin is heads
+up. Ana flips the coin. Ana flips the coin again. Is the coin still heads
+up?''; como duas viradas retornam a moeda ao estado inicial, a resposta correta
+seria \texttt{yes}. No nosso experimento, avaliamos 100 exemplos de Coin Flip,
+tambem gerados deterministicamente por seed. A resposta ouro foi calculada por
+regra, simulando as mudancas de estado da moeda, e a saida do modelo foi
+avaliada por um parser de respostas \texttt{yes}/\texttt{no}.
+
+
+
+\begin{table}[h]
+\centering
+\caption{Tarefas usadas no experimento CoT.}
+\label{tab:cot_tasks}
+\begin{tabular}{p{0.16\linewidth}p{0.22\linewidth}p{0.52\linewidth}}
+\toprule
+Tarefa & Origem & Descricao \\
+\midrule
+GSM8K & \texttt{openai/gsm8k}, split \texttt{test}, config \texttt{main} &
+Conjunto de problemas matematicos de ensino fundamental. Cada item contem um
+enunciado textual e uma resposta numerica final. A avaliacao usa 200 exemplos
+e extrai o \textit{gold} do campo de resposta apos o marcador \texttt{\#\#\#\#}. \\
+Last Letter & Gerada localmente, inspirada no paper de CoT &
+Tarefa simbolica em que o modelo recebe uma lista de palavras ou nomes e deve
+concatenar a ultima letra de cada termo. Por exemplo, para dois nomes, a saida
+esperada e uma string com duas letras. A rodada usa 100 exemplos gerados de
+forma deterministica por seed. \\
+Coin Flip & Gerada localmente, inspirada no paper de CoT &
+Tarefa de rastreamento de estado. O enunciado descreve uma moeda inicialmente
+em um estado e uma sequencia de acoes de virar ou nao virar a moeda. O modelo
+deve responder se a moeda termina com a face inicial para cima, em formato
+\texttt{yes}/\texttt{no}. A rodada usa 100 exemplos gerados de forma
+deterministica por seed. \\
+\bottomrule
+\end{tabular}
+\end{table} 
+\newpage
+\subsection{Resultados}
+
+\begin{table}[h]
+\centering
+\caption{Acuracia por tarefa e condicao no experimento CoT.}
+\label{tab:cot_accuracy}
+\begin{tabular}{lrrrr}
+\toprule
+Tarefa & Condicao & Corretas/N & Acuracia & Delta CoT \\
+\midrule
+GSM8K & Sem CoT & 189/200 & 94,5\% & -- \\
+GSM8K & CoT & 193/200 & 96,5\% & +2,0 p.p. \\
+Last Letter & Sem CoT & 85/100 & 85,0\% & -- \\
+Last Letter & CoT & 84/100 & 84,0\% & -1,0 p.p. \\
+Coin Flip & Sem CoT & 100/100 & 100,0\% & -- \\
+Coin Flip & CoT & 100/100 & 100,0\% & +0,0 p.p. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[h]
+\centering
+\caption{Custo medio por item no experimento CoT.}
+\label{tab:cot_cost}
+\begin{tabular}{lrrrr}
+\toprule
+Tarefa/condicao & Latencia (s) & Prompt tok. & Resposta tok. & Total tok. \\
+\midrule
+GSM8K Sem CoT & 1,03 & 584,4 & 202,1 & 786,5 \\
+GSM8K CoT & 1,12 & 892,4 & 219,0 & 1111,4 \\
+Last Letter Sem CoT & 0,38 & 303,4 & 72,8 & 376,1 \\
+Last Letter CoT & 0,75 & 428,4 & 146,7 & 575,1 \\
+Coin Flip Sem CoT & 1,51 & 502,3 & 298,2 & 800,5 \\
+Coin Flip CoT & 0,82 & 852,3 & 158,4 & 1010,8 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Analise critica}
+
+O principal ganho de CoT aparece em GSM8K: a acuracia sobe de 94,5\% para
+96,5\%. A comparacao pareada mostrou que CoT corrigiu seis itens que a resposta
+direta errou, enquanto perdeu dois itens que a resposta direta acertou. Esse
+padrao e consistente com a hipotese de que demonstracoes intermediarias ajudam
+em problemas aritmeticos que exigem decomposicao. Ainda assim, o ganho e
+pequeno e a amostra nao e suficiente para afirmar uma vantagem universal.
+
+Em Last Letter, CoT nao melhorou o desempenho. A tarefa exige uma operacao
+simbolica curta e exata; nesse caso, raciocinio intermediario pode apenas criar
+mais pontos de erro. Em Coin Flip, ambas as condicoes atingiram 100\%, o que
+torna a tarefa pouco informativa para distinguir os metodos nesta configuracao.
+
+Do ponto de vista de custo, CoT aumenta o numero medio de tokens. Em GSM8K, o
+total medio cresce de 786,5 para 1111,4 tokens por item, aumento aproximado de
+41\%. Assim, o uso de CoT parece justificado para raciocinio matematico
+multi-etapa, mas nao para tarefas simbolicas simples ou ja saturadas.
+
+\section{Experimento 2: \textit{Process Supervision} promptado}
+
+\subsection{Metodo}
+
+O segundo experimento implementa uma aproximacao promptada de Process
+Supervision. O GPT-OSS-20B gera oito solucoes por problema MATH. Em seguida, o
+mesmo modelo julga cada passo de cada solucao com os labels
+\texttt{positive}, \texttt{neutral} e \texttt{negative}. As probabilidades sao
+estimadas com logprobs do endpoint de completions. Seguindo a configuracao
+principal descrita no paper de referencia, \texttt{neutral} e tratado como
+positivo, e o score da solucao e o produto dos scores de seus passos.
+
+Este experimento nao treina um PRM real e nao usa labels humanos de PRM800K.
+Ele mede a utilidade operacional de um verificador promptado com o mesmo modelo
+que gerou as solucoes. Isso cria risco de erros correlacionados: uma solucao
+errada, mas plausivel para o gerador, tambem pode parecer plausivel para o
+verificador.
+
+O benchmark usado foi o MATH, tambem conhecido nesta implementacao pelo dataset
+\texttt{EleutherAI/hendrycks\_math} no Hugging Face. Esse conjunto foi criado
+para avaliar resolucao de problemas matematicos mais dificeis que GSM8K, em
+estilo olimpiada, competicao escolar e cursos avancados de ensino medio. Os
+enunciados cobrem areas como algebra, geometria, teoria dos numeros,
+precalculo, contagem e probabilidade, e normalmente exigem uma sequencia de
+passos matematicos, nao apenas uma operacao aritmetica direta. Um exemplo
+tipico de problema MATH pode pedir, por exemplo, a simplificacao de uma
+expressao algebrica, a area de uma figura geometrica ou a solucao de uma
+equacao com restricoes. No nosso experimento, usamos apenas o split
+\texttt{test} e quatro configuracoes do dataset:
+\texttt{intermediate\_algebra}, \texttt{precalculus}, \texttt{geometry} e
+\texttt{number\_theory}. Esses subconjuntos somaram 2468 itens vistos pelo
+loader. Como a avaliacao automatica dependia de comparacao numerica, filtramos
+os exemplos para manter apenas aqueles em que a resposta final numerica podia
+ser extraida de uma expressao \verb|\boxed{...}|; nessa etapa, 781 itens foram
+descartados. A partir dos itens restantes, selecionamos 50 problemas usando a
+seed 43. Para cada problema, o modelo gerou 8 solucoes candidatas, totalizando
+400 solucoes avaliadas pelo seletor PRM, majority vote e oracle.
+
+Antes da rodada final, o experimento passou por uma etapa incremental de
+implementacao e validacao. Primeiro, foi implementado um pipeline minimo para
+gerar solucoes, quebrar cada solucao em passos, avaliar cada passo com um
+verificador promptado e salvar os artefatos em \texttt{JSONL}, \texttt{CSV}, e
+\texttt{Markdown}. Em seguida, rodamos testes menores, incluindo uma
+rodada inicial com poucos problemas e uma rodada \texttt{10x4}, para validar o
+formato das respostas, a escrita dos arquivos, a agregacao das metricas e o
+comportamento dos seletores \emph{first}, \emph{majority vote},
+\emph{PRM best-of-N} e \emph{oracle best-of-N}. Essas rodadas preliminares
+tambem revelaram problemas praticos importantes, especialmente truncamento de
+respostas e erros de parsing de fracoes finais. Por isso, antes da rodada
+\texttt{50x8}, aumentamos o orcamento de geracao para
+\texttt{max\_tokens=4096}, ajustamos a temperatura para 0,9 a fim de aumentar a
+diversidade dos candidatos, e corrigimos o parser para reconhecer respostas
+como \texttt{1/3}, \verb|\frac{5}{9}| e expressoes com \verb|\displaystyle|.
+Assim, os resultados reportados representam a rodada final apos a estabilizacao
+do pipeline, nao apenas uma execucao unica isolada.
+
+
+\begin{table}[h]
+\centering
+\caption{Configuracao da rodada PRM.}
+\label{tab:prm_setup}
+\begin{tabular}{ll}
+\toprule
+Campo & Valor \\
+\midrule
+Benchmark & \texttt{EleutherAI/hendrycks\_math} \\
+Configs MATH & intermediate algebra, precalculus, geometry, number theory \\
+Filtro & Apenas respostas numericas extraiveis \\
+Problemas & 50 \\
+Solucoes por problema & 8 \\
+Candidatos totais & 400 \\
+Temperatura de geracao & 0,9 \\
+\texttt{max\_tokens} & 4096 \\
+Seed & 43 \\
+Scoring PRM & Produto dos scores por passo \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+O protocolo de selecao foi inspirado no desenho experimental de
+\emph{Let's Verify Step by Step}~\cite{lightman2023verify}, que avalia nao
+apenas uma unica resposta do modelo, mas tambem estrategias para selecionar a
+melhor solucao entre varias amostras. Por isso, comparamos quatro metodos. O
+primeiro, \emph{first sample}, usa simplesmente a primeira solucao gerada e
+serve como baseline sem busca. O segundo, \emph{majority vote}, escolhe a
+resposta final mais frequente entre as oito solucoes candidatas; esse baseline
+é importante porque muitos ganhos de \emph{best-of-N} podem vir apenas da
+agregacao de varias amostras, sem qualquer verificador por passo. O terceiro,
+\emph{PRM best-of-N}, seleciona a solucao com maior score de processo, isto e,
+a solucao cujos passos foram julgados como mais confiaveis pelo verificador
+promptado. Por fim, \emph{oracle best-of-N} escolhe uma solucao correta sempre
+que ela existe entre as candidatas; esse metodo nao e utilizavel na pratica,
+mas funciona como teto superior para medir quanta margem de melhoria ainda
+existiria se o seletor fosse perfeito.
+
+
+\subsection{Resultados}
+
+\begin{table}[h]
+\centering
+\caption{Acuracia corrigida por metodo de selecao no experimento PRM.}
+\label{tab:prm_accuracy}
+\begin{tabular}{lrrrr}
+\toprule
+Metodo & Corretas/N & Acuracia & Falhas parse & Cobertura parse \\
+\midrule
+First sample & 43/50 & 86,0\% & 5 & 90,0\% \\
+Majority vote & 48/50 & 96,0\% & 0 & 100,0\% \\
+PRM best-of-N & 48/50 & 96,0\% & 0 & 100,0\% \\
+Oracle best-of-N & 49/50 & 98,0\% & 1 & 98,0\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[h]
+\centering
+\caption{Custo medio por problema selecionado no experimento PRM.}
+\label{tab:prm_cost}
+\begin{tabular}{lrrrr}
+\toprule
+Metodo & Lat. geracao (s) & Lat. PRM (s) & Tok. geracao & Tok. PRM \\
+\midrule
+First sample & 7,94 & 0,00 & 1794,4 & 0,0 \\
+Majority vote & 61,67 & 0,00 & 14017,2 & 0,0 \\
+PRM best-of-N & 61,67 & 2,14 & 14017,2 & 39707,4 \\
+Oracle best-of-N & 61,67 & 0,00 & 14017,2 & 0,0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[h]
+\centering
+\caption{Diagnostico dos candidatos gerados no experimento PRM.}
+\label{tab:prm_diagnostic}
+\begin{tabular}{lr}
+\toprule
+Metrica & Valor \\
+\midrule
+Candidatos totais & 400 \\
+Candidatos corretos apos correcao do parser & 345 \\
+Falhas de parse em candidatos & 39 \\
+Problemas com 8/8 candidatos corretos & 36 \\
+Problemas com mistura de candidatos corretos e incorretos & 13 \\
+Problemas sem nenhum candidato correto & 1 \\
+Problemas com uma unica resposta parseavel distinta & 43 \\
+AUC do score PRM para separar candidato correto/incorreto & 0,397 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Analise critica}
+
+O resultado mais importante e que gerar oito solucoes por problema melhora
+substancialmente o desempenho: o primeiro candidato acerta 86,0\%, enquanto
+majority vote acerta 96,0\%. Isso mostra que o modelo frequentemente contem a
+resposta correta no conjunto de candidatos mesmo quando a primeira amostra falha.
+
+Entretanto, o PRM promptado nao supera majority vote. Apos a correcao do
+parser, os dois metodos empatam em 48/50. O oracle chega a 49/50, mostrando que
+havia uma oportunidade adicional de selecao que nem majority vote nem PRM
+capturaram. O caso principal foi um problema de precalculo em que havia apenas
+um candidato correto entre oito; tanto a votacao quanto o PRM escolheram uma
+resposta incorreta. Esse caso ilustra a limitacao do verificador promptado:
+quando a solucao correta e rara e longa, o score por produto pode penaliza-la.
+
+O diagnostico de scores reforca essa cautela. Embora o score medio de
+candidatos corretos seja maior que o de candidatos incorretos em alguns
+resumos, a ordenacao fina nao e confiavel: a AUC do score PRM para separar
+candidatos corretos de incorretos ficou em aproximadamente 0,397. Isso indica
+que o score bruto nao deve ser interpretado como probabilidade calibrada de
+correcao. Uma causa provavel e o uso do produto dos scores por passo, que tende
+a favorecer solucoes mais curtas. De fato, o PRM selecionou solucoes com media
+de 8,86 passos, enquanto majority vote selecionou solucoes com media de 14,06
+passos.
+
+O custo operacional do PRM promptado tambem e relevante. Majority vote exige
+apenas os tokens de geracao dos oito candidatos. PRM best-of-N exige os mesmos
+tokens de geracao e ainda adiciona cerca de 39707 tokens de verificacao por
+problema. Portanto, nesta configuracao, o PRM promptado aumenta muito o custo
+sem melhorar a acuracia sobre majority vote.
+
+\section{Discussao geral}
+
+Os dois experimentos devem ser lidos como uma demonstracao didatica da evolucao
+recente em modelos de linguagem: primeiro, observa-se que induzir o modelo a
+explicitar passos intermediarios por meio de \emph{chain-of-thought} pode
+melhorar respostas em tarefas que exigem raciocinio; em seguida, esses passos
+intermediarios passam a ser tratados nao apenas como texto auxiliar, mas como
+objetos que podem ser avaliados, comparados e usados como sinal de treinamento.
+No Experimento 1, a melhoria em GSM8K mostra o fenomeno original do CoT: mesmo
+sem alterar os pesos do modelo, mudar o formato do prompt desloca o
+comportamento do modelo para solucoes mais decompostas e frequentemente mais
+corretas. Esse resultado e especialmente claro em problemas aritmeticos
+multi-etapa, nos quais a resposta direta pode falhar por pular uma etapa de
+calculo ou interpretar mal uma relacao do enunciado.
+
+O Experimento 2 representa o passo conceitual seguinte. A partir do momento em
+que uma solucao passa a ser escrita como uma sequencia de passos, torna-se
+possivel avaliar o processo, e nao apenas a resposta final. Essa e a motivacao
+central de Process Supervision: transformar o raciocinio intermediario em um
+sinal de supervisao para selecionar melhores solucoes e, em sistemas maiores,
+alimentar etapas de post-training e pipelines de aprendizado por reforco. Nesta
+implementacao, nao treinamos um PRM real; usamos um PRM promptado para mostrar
+operacionalmente como esse sinal poderia ser produzido. Mesmo assim, o
+experimento ilustra a arquitetura da ideia: gerar varias solucoes, decompor em
+passos, julgar cada passo, agregar os scores e escolher uma solucao por
+best-of-N.
+
+Os resultados tambem mostram por que esse tipo de supervisao se tornou
+importante. No experimento PRM, o conjunto de oito candidatos por problema
+frequentemente continha uma resposta correta mesmo quando a primeira amostra
+falhava. Isso evidencia que parte do problema nao e apenas ``o modelo sabe ou
+nao sabe'', mas tambem como selecionar, entre varias trajetorias possiveis, a
+trajetoria mais confiavel. O majority vote ja foi um baseline forte nesta
+rodada, e o PRM promptado nao o superou; ainda assim, essa limitacao e
+informativa. Ela mostra que simplesmente pedir ao mesmo modelo para julgar seus
+proprios passos nao equivale a ter um reward model treinado com supervisao
+humana. Em outras palavras, o experimento reproduz em pequena escala a
+motivacao para PRMs treinados: e necessario transformar avaliacoes de processo
+em um sinal mais calibrado, robusto e util para selecao e treinamento.
+
+Assim, o valor principal do projeto nao esta apenas nas acuracias finais, mas
+na cadeia experimental que elas tornam visivel. CoT demonstra que a forma de
+externalizar o raciocinio altera o desempenho do modelo. Process Supervision
+mostra como esse raciocinio externalizado pode ser convertido em dados de
+avaliacao por passo. Essa passagem, de ``promptar para raciocinar'' para
+``supervisionar o processo de raciocinio'', e uma das bases conceituais que
+influenciaram novas formas de post-training, reward modeling e aprendizado por
+reforco em modelos de linguagem.
+
+\section{Limitacoes}
+
+Este estudo tem quatro limitacoes principais. Primeiro, as amostras sao
+exploratorias: 200 itens de GSM8K, 100 itens por tarefa simbolica e 50 problemas
+MATH no PRM. Segundo, o PRM e promptado, nao treinado com labels humanos; logo,
+nao deve ser confundido com um reward model supervisionado real. Terceiro, o
+mesmo modelo gera e julga, aumentando o risco de erros correlacionados. Quarto,
+o filtro numeric-only simplifica MATH e remove exemplos cujo formato de resposta
+nao era facilmente comparavel por regra.
+
+\section{Conclusao}
+
+Para o GPT-OSS-20B executado localmente, CoT mostrou beneficio moderado em
+GSM8K, mas nao trouxe ganho em tarefas simbolicas simples. No estudo de Process
+Supervision, o best-of-8 foi efetivo, mas o PRM promptado nao superou majority
+vote e adicionou custo substancial. Assim, os resultados sustentam uma
+recomendacao pragmatica: usar CoT seletivamente para problemas matematicos
+multi-etapa e usar best-of-N com majority vote como baseline forte antes de
+adotar verificadores por passo. Para demonstrar ganho real de Process
+Supervision, o proximo passo deveria comparar agregadores alternativos de score
+por passo, como media de log-score ou minimo por passo, ou treinar um PRM real
+com labels humanos.
+
+\begin{thebibliography}{9}
+
+\bibitem{wei2022cot}
+Jason Wei et al.
+\newblock Chain-of-Thought Prompting Elicits Reasoning in Large Language Models.
+\newblock arXiv:2201.11903, 2022.
+
+\bibitem{lightman2023verify}
+Hunter Lightman et al.
+\newblock Let's Verify Step by Step.
+\newblock arXiv:2305.20050, 2023.
+
+\bibitem{gsm8k}
+OpenAI.
+\newblock GSM8K dataset.
+\newblock \url{https://huggingface.co/datasets/openai/gsm8k}.
+
+\bibitem{math}
+EleutherAI.
+\newblock Hendrycks MATH dataset.
+\newblock \url{https://huggingface.co/datasets/EleutherAI/hendrycks_math}.
+
+\end{thebibliography}
+
+\end{document}

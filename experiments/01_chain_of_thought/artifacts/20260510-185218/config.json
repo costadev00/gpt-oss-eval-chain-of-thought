@@ -1,0 +1,24 @@
+{
+  "model": "openai/gpt-oss-20b",
+  "base_url": "http://localhost:8000/v1",
+  "tasks": [
+    "gsm8k",
+    "last_letter",
+    "coin_flip"
+  ],
+  "gsm8k_limit": 200,
+  "symbolic_limit": 100,
+  "seed": 42,
+  "conditions": [
+    "standard",
+    "cot"
+  ],
+  "temperature": 0,
+  "reasoning_effort": "medium",
+  "max_tokens": 1024,
+  "system_prompt": "You are answering benchmark evaluation questions. Follow the format shown in the user's examples. If the examples include reasoning, you may show concise reasoning before the answer; otherwise answer directly. Always end with exactly one final line formatted as `Final answer: <answer>`, with no text after it. For numeric questions, `<answer>` must be only the final number without units. For yes/no questions, `<answer>` must be exactly `yes` or `no`. For last-letter questions, `<answer>` must be only the concatenated letters.",
+  "system_prompt_hash": "21add56bc2c5283d",
+  "backend": "vllm-openai-compatible",
+  "tensor_parallel_size": 4,
+  "skip_preflight": false
+}

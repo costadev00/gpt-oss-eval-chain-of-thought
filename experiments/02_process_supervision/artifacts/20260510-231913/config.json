@@ -1,0 +1,26 @@
+{
+  "timestamp": "20260510-231913",
+  "model": "openai/gpt-oss-20b",
+  "base_url": "http://localhost:8000/v1",
+  "benchmark": "EleutherAI/hendrycks_math",
+  "math_configs": [
+    "intermediate_algebra",
+    "precalculus",
+    "geometry",
+    "number_theory"
+  ],
+  "math_limit": 50,
+  "samples_per_problem": 8,
+  "seed": 43,
+  "max_tokens": 4096,
+  "generation_temperature": 0.9,
+  "reasoning_effort": "medium",
+  "top_logprobs": 20,
+  "math_skipped": 781,
+  "math_total_seen": 2468,
+  "math_loaded": 50,
+  "prm_type": "prompted_gpt_oss_20b",
+  "solution_score": "product_step_scores_neutral_as_positive",
+  "backend": "vllm-openai-compatible",
+  "tensor_parallel_size": 4
+}

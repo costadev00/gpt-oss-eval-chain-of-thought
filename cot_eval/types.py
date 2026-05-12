@@ -27,6 +27,18 @@ class CompletionResult:
 
 
 @dataclass(frozen=True)
+class TextCompletionLogprobsResult:
+    content: str
+    latency_s: float
+    tokens: list[str]
+    token_logprobs: list[float | None]
+    top_logprobs: list[dict[str, float]]
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
+
+
+@dataclass(frozen=True)
 class Prediction:
     task: TaskName
     condition: Condition
