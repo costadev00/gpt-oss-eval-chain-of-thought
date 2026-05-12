@@ -48,3 +48,14 @@ Arquivos:
 
 Conclusão: CoT ajudou em GSM8K, mas não trouxe ganho nas tarefas simbólicas
 simples avaliadas.
+
+## Consumo médio de tokens por item
+
+| Tarefa | Condição | Prompt | Resposta | Total |
+|---|---|---:|---:|---:|
+| GSM8K | Sem CoT | 584,4 | 202,1 | 786,5 |
+| GSM8K | CoT | 892,4 | 219,0 | 1111,4 |
+| Last Letter | Sem CoT | 303,4 | 72,8 | 376,1 |
+| Last Letter | CoT | 428,4 | 146,7 | 575,1 |
+| Coin Flip | Sem CoT | 502,3 | 298,2 | 800,5 |
+| Coin Flip | CoT | 852,3 | 158,4 | 1010,8 |

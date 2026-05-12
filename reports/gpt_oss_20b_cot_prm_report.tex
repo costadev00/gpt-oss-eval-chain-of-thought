@@ -24,7 +24,9 @@ experimentos foram executados localmente com vLLM em quatro GPUs RTX 4000 Ada.
 Os resultados indicam que CoT melhora GSM8K de 94,5\% para 96,5\%, mas nao
 ajuda em tarefas simbolicas simples. No experimento de Process Supervision, o
 best-of-8 melhora a acuracia de 86,0\% para 96,0\%, mas o PRM promptado empata
-com majority vote e nao supera o baseline simples.
+com majority vote e nao supera o baseline simples. Todo o codigo usado para
+gerar, avaliar e documentar os experimentos esta disponivel no repositorio
+publico do projeto.
 \end{abstract}
 
 \section{Configuracao experimental}
@@ -60,6 +62,61 @@ Em ambos os estudos, a avaliacao se baseia apenas em respostas visiveis,
 respostas parseadas e metricas agregadas. O relatorio nao usa nem expande raw
 chain-of-thought interno do modelo.
 
+\section{Codigo, organizacao e artefatos}
+
+Todo o codigo-fonte, a documentacao de reproducao e os artefatos resumidos
+deste trabalho estao disponiveis no repositorio GitHub~\cite{repo}:
+\url{https://github.com/costadev00/gpt-oss-eval-chain-of-thought}. O
+repositorio foi organizado para separar claramente os dois experimentos:
+\texttt{experiments/01\_chain\_of\_thought/} contem a avaliacao de CoT, e
+\texttt{experiments/02\_process\_supervision/} contem o teste de Process
+Supervision promptado. O arquivo \texttt{README.md} funciona como guia de
+execucao, enquanto este artigo consolida a metodologia, os resultados e a
+analise critica.
+
+\begin{table}[h]
+\centering
+\caption{Principais arquivos do repositorio usados neste estudo.}
+\label{tab:repo_files}
+\begin{tabular}{p{0.34\linewidth}p{0.56\linewidth}}
+\toprule
+Arquivo ou pasta & Papel no projeto \\
+\midrule
+\texttt{README.md} & Guia principal em portugues, com instalacao, comandos,
+metodologia resumida, hardware e resultados. \\
+\texttt{pyproject.toml} & Metadados do pacote Python, dependencias e
+configuracao de testes. \\
+\texttt{cot\_eval/run.py} & Ponto de entrada do experimento CoT versus resposta
+direta. \\
+\texttt{cot\_eval/prompts.py} & Prompts e contrato de saida usados nas
+condicoes \emph{standard} e CoT. \\
+\texttt{cot\_eval/tasks.py} & Carregamento de GSM8K e geracao deterministica
+das tarefas Last Letter e Coin Flip. \\
+\texttt{cot\_eval/audit\_parser.py} & Auditoria offline do parser sem nova
+chamada ao modelo. \\
+\texttt{cot\_eval/prm\_run.py} & Ponto de entrada do experimento de Process
+Supervision promptado. \\
+\texttt{cot\_eval/math\_tasks.py} & Carregamento e normalizacao numerica do
+benchmark MATH. \\
+\texttt{cot\_eval/prm\_scoring.py} & Divisao de solucoes em passos, calculo de
+scores PRM e majority vote. \\
+\texttt{experiments/01\_chain\_of\_thought/} & README proprio e artefatos
+preservados da rodada principal de CoT. \\
+\texttt{experiments/02\_process\_supervision/} & README proprio e artefatos
+preservados da rodada principal de Process Supervision. \\
+\texttt{reports/gpt\_oss\_20b\_cot\_prm\_report.tex} & Fonte deste artigo
+consolidado. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+As saidas brutas completas, como \texttt{predictions.jsonl},
+\texttt{candidates.jsonl}, \texttt{selected.jsonl} e
+\texttt{step\_scores.jsonl}, nao sao versionadas no repositorio enxuto porque
+podem ser regeneradas pelos comandos documentados. Para manter rastreabilidade
+sem inflar o repositorio, preservamos os arquivos pequenos de configuracao,
+metricas e analise nas pastas de cada experimento.
+
 \section{Experimento 1: CoT versus resposta direta}
 
 \subsection{Metodo}
@@ -71,6 +128,13 @@ final. As duas condicoes compartilham o mesmo modelo, backend, temperatura
 zero, \texttt{reasoning\_effort=medium} e o mesmo contrato de saida:
 \texttt{Final answer: <answer>}. Esse contrato reduz a chance de o parser
 extrair numeros intermediarios em vez da resposta final.
+
+A implementacao deste experimento esta concentrada em \texttt{cot\_eval/run.py}.
+Os prompts ficam em \texttt{cot\_eval/prompts.py}, as tarefas em
+\texttt{cot\_eval/tasks.py} e as funcoes de extracao/comparacao de respostas em
+\texttt{cot\_eval/scoring.py}. Os artefatos preservados da rodada principal
+ficam em
+\texttt{experiments/01\_chain\_of\_thought/artifacts/20260510-185218/}.
 
 Foram avaliadas tres tarefas: GSM8K, Last Letter e Coin Flip. GSM8K representa
 raciocinio aritmetico multi-etapa; Last Letter e uma tarefa simbolica local; e
@@ -218,6 +282,14 @@ mesmo modelo julga cada passo de cada solucao com os labels
 estimadas com logprobs do endpoint de completions. Seguindo a configuracao
 principal descrita no paper de referencia, \texttt{neutral} e tratado como
 positivo, e o score da solucao e o produto dos scores de seus passos.
+
+A implementacao deste estudo esta em \texttt{cot\_eval/prm\_run.py}. O
+carregamento e a normalizacao do MATH ficam em \texttt{cot\_eval/math\_tasks.py};
+os prompts de geracao e julgamento ficam em \texttt{cot\_eval/prm\_prompts.py};
+e a divisao em passos, o calculo dos scores e o majority vote ficam em
+\texttt{cot\_eval/prm\_scoring.py}. Os artefatos preservados da rodada
+principal ficam em
+\texttt{experiments/02\_process\_supervision/artifacts/20260510-231913/}.
 
 Este experimento nao treina um PRM real e nao usa labels humanos de PRM800K.
 Ele mede a utilidade operacional de um verificador promptado com o mesmo modelo
@@ -460,6 +532,11 @@ Supervision, o proximo passo deveria comparar agregadores alternativos de score
 por passo, como media de log-score ou minimo por passo, ou treinar um PRM real
 com labels humanos.
 
+Todos os scripts usados para executar essas avaliacoes, os testes automatizados,
+os artefatos resumidos e o README de reproducao estao disponiveis no repositorio
+publico do projeto~\cite{repo}:
+\url{https://github.com/costadev00/gpt-oss-eval-chain-of-thought}.
+
 \begin{thebibliography}{9}
 
 \bibitem{wei2022cot}
@@ -481,6 +558,11 @@ OpenAI.
 EleutherAI.
 \newblock Hendrycks MATH dataset.
 \newblock \url{https://huggingface.co/datasets/EleutherAI/hendrycks_math}.
+
+\bibitem{repo}
+CostaDev00.
+\newblock GPT-OSS eval chain-of-thought repository.
+\newblock \url{https://github.com/costadev00/gpt-oss-eval-chain-of-thought}.
 
 \end{thebibliography}
 
