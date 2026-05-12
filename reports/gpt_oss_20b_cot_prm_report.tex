@@ -1,16 +1,24 @@
-\documentclass[11pt]{article}
-
-\usepackage[margin=1in]{geometry}
+\documentclass[a4paper,12pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{amsmath}
+\usepackage{amssymb}
 \usepackage{booktabs}
 \usepackage{array}
-\usepackage{hyperref}
+\usepackage{tabularx}
 
-\title{Avaliacao do GPT-OSS-20B com Chain-of-Thought e Process Supervision Promptado}
-\author{Evaluation harness local com vLLM}
-\date{Rodadas principais: 20260510-185218 e 20260510-231913}
+\usepackage{dentitle}
+\usepackage{personal}
+\emergencystretch=3em
+
+\title{Avaliação do GPT-OSS-20B com Chain-of-Thought e Process Supervision Promptado}
+\author{Matheus Costa Monteiro}
+\date{28 de março de 2026}
 
 \begin{document}
-\maketitle
+\sloppy
+\makedendentitle{PCS5029 - PLN com RNN}{Relatório: GPT-OSS-20B com Chain-of-Thought e Process Supervision}{}
 
 \begin{abstract}
 Este relatorio consolida duas avaliacoes locais do modelo
@@ -42,7 +50,7 @@ prompting com CoT e selecao por supervisao de processo.
 \centering
 \caption{Configuracao geral dos experimentos.}
 \label{tab:general_setup}
-\begin{tabular}{ll}
+\begin{tabularx}{\textwidth}{p{0.28\textwidth}X}
 \toprule
 Campo & Valor \\
 \midrule
@@ -52,10 +60,10 @@ Paralelismo & Tensor parallel em 4 GPUs \\
 GPUs & 4x NVIDIA RTX 4000 Ada Generation \\
 Hardware alvo & Inferencia local distribuida \\
 Raw CoT interno & Nao utilizado no relatorio \\
-Artefatos CoT & \texttt{experiments/01\_chain\_of\_thought/artifacts/20260510-185218/} \\
-Artefatos PRM & \texttt{experiments/02\_process\_supervision/artifacts/20260510-231913/} \\
+Artefatos CoT & \texttt{experiments/01\_chain\_of\_thought/} \\
+Artefatos PRM & \texttt{experiments/02\_process\_supervision/} \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \end{table}
 
 Em ambos os estudos, a avaliacao se baseia apenas em respostas visiveis,
@@ -66,10 +74,11 @@ chain-of-thought interno do modelo.
 
 Todo o codigo-fonte, a documentacao de reproducao e os artefatos resumidos
 deste trabalho estao disponiveis no repositorio GitHub~\cite{repo}:
-\url{https://github.com/costadev00/gpt-oss-eval-chain-of-thought}. O
+\href{https://github.com/costadev00/gpt-oss-eval-chain-of-thought}{repositorio
+publico do projeto}. O
 repositorio foi organizado para separar claramente os dois experimentos:
-\texttt{experiments/01\_chain\_of\_thought/} contem a avaliacao de CoT, e
-\texttt{experiments/02\_process\_supervision/} contem o teste de Process
+\texttt{01\_chain\_of\_thought} contem a avaliacao de CoT, e
+\texttt{02\_process\_supervision} contem o teste de Process
 Supervision promptado. O arquivo \texttt{README.md} funciona como guia de
 execucao, enquanto este artigo consolida a metodologia, os resultados e a
 analise critica.
@@ -78,7 +87,7 @@ analise critica.
 \centering
 \caption{Principais arquivos do repositorio usados neste estudo.}
 \label{tab:repo_files}
-\begin{tabular}{p{0.34\linewidth}p{0.56\linewidth}}
+\begin{tabularx}{\textwidth}{p{0.27\textwidth}X}
 \toprule
 Arquivo ou pasta & Papel no projeto \\
 \midrule
@@ -86,28 +95,27 @@ Arquivo ou pasta & Papel no projeto \\
 metodologia resumida, hardware e resultados. \\
 \texttt{pyproject.toml} & Metadados do pacote Python, dependencias e
 configuracao de testes. \\
-\texttt{cot\_eval/run.py} & Ponto de entrada do experimento CoT versus resposta
+\texttt{run.py} & Ponto de entrada do experimento CoT versus resposta
 direta. \\
-\texttt{cot\_eval/prompts.py} & Prompts e contrato de saida usados nas
+\texttt{prompts.py} & Prompts e contrato de saida usados nas
 condicoes \emph{standard} e CoT. \\
-\texttt{cot\_eval/tasks.py} & Carregamento de GSM8K e geracao deterministica
+\texttt{tasks.py} & Carregamento de GSM8K e geracao deterministica
 das tarefas Last Letter e Coin Flip. \\
-\texttt{cot\_eval/audit\_parser.py} & Auditoria offline do parser sem nova
+\texttt{audit\_parser.py} & Auditoria offline do parser sem nova
 chamada ao modelo. \\
-\texttt{cot\_eval/prm\_run.py} & Ponto de entrada do experimento de Process
+\texttt{prm\_run.py} & Ponto de entrada do experimento de Process
 Supervision promptado. \\
-\texttt{cot\_eval/math\_tasks.py} & Carregamento e normalizacao numerica do
+\texttt{math\_tasks.py} & Carregamento e normalizacao numerica do
 benchmark MATH. \\
-\texttt{cot\_eval/prm\_scoring.py} & Divisao de solucoes em passos, calculo de
+\texttt{prm\_scoring.py} & Divisao de solucoes em passos, calculo de
 scores PRM e majority vote. \\
-\texttt{experiments/01\_chain\_of\_thought/} & README proprio e artefatos
-preservados da rodada principal de CoT. \\
-\texttt{experiments/02\_process\_supervision/} & README proprio e artefatos
-preservados da rodada principal de Process Supervision. \\
-\texttt{reports/gpt\_oss\_20b\_cot\_prm\_report.tex} & Fonte deste artigo
-consolidado. \\
+\texttt{01\_chain\_of\_thought} & Pasta em \texttt{experiments/} com README
+proprio e artefatos preservados da rodada principal de CoT. \\
+\texttt{02\_process\_supervision} & Pasta em \texttt{experiments/} com README
+proprio e artefatos preservados da rodada principal de Process Supervision. \\
+\texttt{relatorio .tex} & Fonte deste artigo em \texttt{reports/}. \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \end{table}
 
 As saidas brutas completas, como \texttt{predictions.jsonl},
@@ -133,8 +141,8 @@ A implementacao deste experimento esta concentrada em \texttt{cot\_eval/run.py}.
 Os prompts ficam em \texttt{cot\_eval/prompts.py}, as tarefas em
 \texttt{cot\_eval/tasks.py} e as funcoes de extracao/comparacao de respostas em
 \texttt{cot\_eval/scoring.py}. Os artefatos preservados da rodada principal
-ficam em
-\texttt{experiments/01\_chain\_of\_thought/artifacts/20260510-185218/}.
+ficam em \texttt{artifacts/20260510-185218/}, dentro da pasta
+\texttt{experiments/01\_chain\_of\_thought/}.
 
 Foram avaliadas tres tarefas: GSM8K, Last Letter e Coin Flip. GSM8K representa
 raciocinio aritmetico multi-etapa; Last Letter e uma tarefa simbolica local; e
@@ -288,8 +296,8 @@ carregamento e a normalizacao do MATH ficam em \texttt{cot\_eval/math\_tasks.py}
 os prompts de geracao e julgamento ficam em \texttt{cot\_eval/prm\_prompts.py};
 e a divisao em passos, o calculo dos scores e o majority vote ficam em
 \texttt{cot\_eval/prm\_scoring.py}. Os artefatos preservados da rodada
-principal ficam em
-\texttt{experiments/02\_process\_supervision/artifacts/20260510-231913/}.
+principal ficam em \texttt{artifacts/20260510-231913/}, dentro da pasta
+\texttt{experiments/02\_process\_supervision/}.
 
 Este experimento nao treina um PRM real e nao usa labels humanos de PRM800K.
 Ele mede a utilidade operacional de um verificador promptado com o mesmo modelo
@@ -535,7 +543,8 @@ com labels humanos.
 Todos os scripts usados para executar essas avaliacoes, os testes automatizados,
 os artefatos resumidos e o README de reproducao estao disponiveis no repositorio
 publico do projeto~\cite{repo}:
-\url{https://github.com/costadev00/gpt-oss-eval-chain-of-thought}.
+\href{https://github.com/costadev00/gpt-oss-eval-chain-of-thought}{GitHub do
+projeto}.
 
 \begin{thebibliography}{9}
 
@@ -552,17 +561,20 @@ Hunter Lightman et al.
 \bibitem{gsm8k}
 OpenAI.
 \newblock GSM8K dataset.
-\newblock \url{https://huggingface.co/datasets/openai/gsm8k}.
+\newblock \href{https://huggingface.co/datasets/openai/gsm8k}{Hugging Face:
+openai/gsm8k}.
 
 \bibitem{math}
 EleutherAI.
 \newblock Hendrycks MATH dataset.
-\newblock \url{https://huggingface.co/datasets/EleutherAI/hendrycks_math}.
+\newblock \href{https://huggingface.co/datasets/EleutherAI/hendrycks_math}{Hugging
+Face: MATH}.
 
 \bibitem{repo}
 CostaDev00.
 \newblock GPT-OSS eval chain-of-thought repository.
-\newblock \url{https://github.com/costadev00/gpt-oss-eval-chain-of-thought}.
+\newblock \href{https://github.com/costadev00/gpt-oss-eval-chain-of-thought}{Repositorio
+GitHub do projeto}.
 
 \end{thebibliography}
 
